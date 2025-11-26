@@ -1,0 +1,64 @@
+name: Pipeline Calculadora AWS AL2023
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  # --- FASE 1: INTEGRACIÓN CONTINUA (CI) ---
+  test-app:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Correr Pruebas
+        run: pytest tests.py
+
+  # --- FASE 2: ENTREGA CONTINUA (CD) ---
+  deploy-aws:
+    needs: test-app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v3
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Construir y Subir Imagen
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/calculadora-devops:latest
+
+      - name: Desplegar en Amazon Linux 2023
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }} # Debe ser 'ec2-user'
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # Comandos para limpiar y actualizar
+            echo "Deteniendo contenedor anterior..."
+            docker stop calculadora-web || true
+            docker rm calculadora-web || true
+            
+            echo "Descargando nueva versión..."
+            docker pull ${{ secrets.DOCKER_USERNAME }}/calculadora-devops:latest
+            
+            echo "Iniciando nuevo contenedor..."
+            # -d: segundo plano, -p: puerto 5000 externo a 5000 interno
+            docker run -d -p 5000:5000 --name calculadora-web ${{ secrets.DOCKER_USERNAME }}/calculadora-devops:latest
